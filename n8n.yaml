@@ -1,0 +1,79 @@
+services:
+  # Certbot service to obtain SSL certificates for both subdomains (one-shot, exits on success)
+  certbot:
+    image: certbot/certbot:latest
+    container_name: certbot
+    restart: "no"
+    entrypoint: "/bin/sh"
+    command: ["-c", "if test -f /etc/letsencrypt/live/n8n.${DOMAIN_NAME}/fullchain.pem && test -f /etc/letsencrypt/live/docs.n8n.${DOMAIN_NAME}/fullchain.pem; then echo 'Certificates already exist'; else certbot certonly --standalone --expand -d n8n.${DOMAIN_NAME},docs.n8n.${DOMAIN_NAME} --email ${EMAIL} --agree-tos --non-interactive; fi && echo 'Certificates ready'"]
+    environment:
+      - DOMAIN_NAME=${DOMAIN_NAME}
+      - EMAIL=${EMAIL}
+    volumes:
+      - certbot_etc:/etc/letsencrypt
+      - certbot_var:/var/lib/letsencrypt
+    ports:
+      - "80:80"  # Only during the short certonly run
+    networks:
+      - internal
+
+  # Nginx reverse proxy service
+  nginx:
+    image: nginx:alpine
+    container_name: nginx_proxy
+    restart: always
+    depends_on:
+      certbot:
+        condition: service_completed_successfully  # Waits for certbot to exit 0
+    environment:
+      - DOMAIN_NAME=${DOMAIN_NAME}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - /var/www/n8n_mydocs:/usr/share/nginx/html/docs:ro
+      - ./nginx.conf.template:/etc/nginx/nginx.conf.template:ro
+      - certbot_etc:/etc/letsencrypt
+    command: ["/bin/sh", "-c", "envsubst '$${DOMAIN_NAME}' < /etc/nginx/nginx.conf.template > /etc/nginx/nginx.conf && nginx -g 'daemon off;'"]
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # The n8n application service.
+  n8n:
+    image: n8nio/n8n:latest
+    container_name: n8n_app
+    restart: always
+    depends_on:
+      - nginx
+    environment:
+      - N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS=true
+      - N8N_HOST=n8n.${DOMAIN_NAME}
+      - N8N_PORT=5678
+      - N8N_PROTOCOL=https
+      - N8N_RUNNERS_ENABLED=true
+      - NODE_ENV=production
+      - WEBHOOK_URL=https://n8n.${DOMAIN_NAME}/
+      - GENERIC_TIMEZONE=${GENERIC_TIMEZONE}
+      - TZ=${GENERIC_TIMEZONE}
+      - N8N_PROXY_HOPS=1
+      - VUE_APP_URL_BASE_API=https://n8n.${DOMAIN_NAME}/
+      - WEBHOOK_TUNNEL_URL=https://n8n.${DOMAIN_NAME}/
+    volumes:
+      - n8n_data:/home/node/.n8n
+      - ./local-files:/files
+    networks:
+      - internal
+
+volumes:
+  n8n_data:
+  certbot_etc:
+  certbot_var:
+
+networks:
+  internal:
+    driver: bridge

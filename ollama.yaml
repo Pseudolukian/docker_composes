@@ -1,0 +1,49 @@
+services:
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ollama
+    restart: unless-stopped
+    volumes:
+      - ollama_data:/root/.ollama
+      - shared_models:/shared_models:rw
+    networks:
+      - ollama-network
+    ports:
+      - "11434:11434"
+    environment:
+      - OLLAMA_NUM_PARALLEL=2
+      - OLLAMA_MAX_LOADED_MODELS=2
+      - OLLAMA_MODELS=/root/.ollama/models
+
+  open-webui:
+    image: ghcr.io/open-webui/open-webui:main
+    container_name: open-webui
+    restart: unless-stopped
+    volumes:
+      - open-webui_data:/app/backend/data
+      - shared_models:/shared_models:ro
+    depends_on:
+      - ollama
+    environment:
+      - OLLAMA_BASE_URL=http://ollama:11434
+      - WEBUI_SECRET_KEY=secret-key-change-this
+      # Интеграция с ComfyUI для генерации изображений
+      #- COMFYUI_BASE_URL=http://comfyui:8188
+      #- IMAGE_GENERATION_ENGINE=comfyui
+      #- ENABLE_IMAGE_GENERATION=true
+      #- AUTOMATIC1111_BASE_URL=http://comfyui:8188
+    networks:
+      - ollama-network
+    ports:
+      - "8181:8080"
+    extra_hosts:
+      - host.docker.internal:host-gateway
+
+volumes:
+  ollama_data:
+  open-webui_data:
+  shared_models:
+
+networks:
+  ollama-network:
+    driver: bridge
