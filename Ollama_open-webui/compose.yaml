@@ -20,7 +20,6 @@ services:
     restart: unless-stopped
     volumes:
       - open-webui_data:/app/backend/data
-      - shared_models:/shared_models:ro
     depends_on:
       - ollama
     environment:
