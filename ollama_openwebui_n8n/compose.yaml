@@ -8,10 +8,10 @@ services:
     networks:
       - ollama-network
     ports:
-      - "11434:11434"
+      - "${OLLAMA_HOST_PORT}:${OLLAMA_CONTAINER_PORT}"
     environment:
-      - OLLAMA_NUM_PARALLEL=2
-      - OLLAMA_MAX_LOADED_MODELS=2
+      - OLLAMA_NUM_PARALLEL=${OLLAMA_NUM_PARALLEL}
+      - OLLAMA_MAX_LOADED_MODELS=${OLLAMA_MAX_LOADED_MODELS}
       - OLLAMA_MODELS=/root/.ollama/models
     dns:
       - 1.1.1.1
@@ -26,16 +26,16 @@ services:
     depends_on:
       - ollama
     environment:
-      - OLLAMA_BASE_URL=http://ollama:11434
+      - OLLAMA_BASE_URL=http://ollama:${OLLAMA_CONTAINER_PORT}
     networks:
       - ollama-network
     ports:
-      - "8181:8080"
+      - "${OWUI_HOST_PORT}:${OWUI_CONTAINER_PORT}"
     extra_hosts:
       - host.docker.internal:host-gateway
 
   n8n:
-    image: n8nio/n8n:1.87.0
+    image: n8nio/n8n:${N8N_VERSION}
     container_name: n8n
     restart: unless-stopped
     volumes:
@@ -44,23 +44,22 @@ services:
       - ollama
       - redis
     environment:
-      - N8N_HOST=0.0.0.0
-      - N8N_PROTOCOL=http
-      - N8N_PORT=5678
-      - WEBHOOK_URL=http://154.59.111.71:5678/
-      - N8N_EDITOR_BASE_URL=http://154.59.111.71:5678/
-      - N8N_SECURE_COOKIE=false
+      - N8N_HOST=${N8N_HOST}
+      - N8N_PROTOCOL=${N8N_PROTOCOL}
+      - N8N_PORT=${N8N_CONTAINER_PORT}
+      - WEBHOOK_URL=http://${SERVER_IP}:${N8N_HOST_PORT}/
+      - N8N_EDITOR_BASE_URL=http://${SERVER_IP}:${N8N_HOST_PORT}/
+      - N8N_SECURE_COOKIE=${N8N_SECURE_COOKIE}
     networks:
       - ollama-network
     ports:
-      - "5678:5678"
+      - "${N8N_HOST_PORT}:${N8N_CONTAINER_PORT}"
 
   redis:
-    image: redis:latest # Or redis/redis-stack for Redis Stack features
+    image: redis:latest
     restart: always
     ports:
-      - "6379:6379"
-    # command: redis-server --requirepass your_redis_password # Uncomment and set if Redis requires a password
+      - "${REDIS_HOST_PORT}:${REDIS_CONTAINER_PORT}"
     volumes:
       - redis_data:/data
     networks:
@@ -69,7 +68,7 @@ services:
   netdata:
     image: netdata/netdata:latest
     container_name: netdata
-    hostname: Server3682490
+    hostname: ${NETDATA_HOSTNAME}
     restart: unless-stopped
     cap_add:
       - SYS_PTRACE
@@ -91,7 +90,7 @@ services:
     networks:
       - ollama-network
     ports:
-      - "19999:19999"
+      - "${NETDATA_HOST_PORT}:${NETDATA_CONTAINER_PORT}"
     environment:
       - NETDATA_DISABLE_CLOUD=1
 
