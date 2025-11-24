@@ -1,0 +1,109 @@
+services:
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ollama
+    restart: unless-stopped
+    volumes:
+      - ollama_data:/root/.ollama
+    networks:
+      - ollama-network
+    ports:
+      - "11434:11434"
+    environment:
+      - OLLAMA_NUM_PARALLEL=2
+      - OLLAMA_MAX_LOADED_MODELS=2
+      - OLLAMA_MODELS=/root/.ollama/models
+    dns:
+      - 1.1.1.1
+      - 1.0.0.1
+
+  open-webui:
+    image: ghcr.io/open-webui/open-webui:main
+    container_name: open-webui
+    restart: unless-stopped
+    volumes:
+      - open-webui_data:/app/backend/data
+    depends_on:
+      - ollama
+    environment:
+      - OLLAMA_BASE_URL=http://ollama:11434
+    networks:
+      - ollama-network
+    ports:
+      - "8181:8080"
+    extra_hosts:
+      - host.docker.internal:host-gateway
+
+  n8n:
+    image: n8nio/n8n:1.87.0
+    container_name: n8n
+    restart: unless-stopped
+    volumes:
+      - n8n_data:/home/node/.n8n
+    depends_on:
+      - ollama
+      - redis
+    environment:
+      - N8N_HOST=0.0.0.0
+      - N8N_PROTOCOL=http
+      - N8N_PORT=5678
+      - WEBHOOK_URL=http://154.59.111.71:5678/
+      - N8N_EDITOR_BASE_URL=http://154.59.111.71:5678/
+      - N8N_SECURE_COOKIE=false
+    networks:
+      - ollama-network
+    ports:
+      - "5678:5678"
+
+  redis:
+    image: redis:latest # Or redis/redis-stack for Redis Stack features
+    restart: always
+    ports:
+      - "6379:6379"
+    # command: redis-server --requirepass your_redis_password # Uncomment and set if Redis requires a password
+    volumes:
+      - redis_data:/data
+    networks:
+      - ollama-network    
+
+  netdata:
+    image: netdata/netdata:latest
+    container_name: netdata
+    hostname: Server3682490
+    restart: unless-stopped
+    cap_add:
+      - SYS_PTRACE
+      - SYS_ADMIN
+    security_opt:
+      - apparmor:unconfined
+    volumes:
+      - netdataconfig:/etc/netdata
+      - netdatalib:/var/lib/netdata
+      - netdatacache:/var/cache/netdata
+      - /etc/passwd:/host/etc/passwd:ro
+      - /etc/group:/host/etc/group:ro
+      - /etc/localtime:/etc/localtime:ro
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /etc/os-release:/host/etc/os-release:ro
+      - /var/log:/host/var/log:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - ollama-network
+    ports:
+      - "19999:19999"
+    environment:
+      - NETDATA_DISABLE_CLOUD=1
+
+volumes:
+  ollama_data:
+  open-webui_data:
+  n8n_data:
+  netdataconfig:
+  netdatalib:
+  netdatacache:
+  redis_data:
+
+networks:
+  ollama-network:
+    driver: bridge
