@@ -63,7 +63,7 @@ services:
     volumes:
       - redis_data:/data
     networks:
-      - ollama-network    
+      - ollama-network 
 
   netdata:
     image: netdata/netdata:latest
@@ -94,6 +94,29 @@ services:
     environment:
       - NETDATA_DISABLE_CLOUD=1
 
+  obsidian:
+    image: lscr.io/linuxserver/obsidian:latest
+    container_name: obsidian
+    restart: unless-stopped
+    security_opt:
+      - seccomp:unconfined
+    environment:
+      - PUID=${PUID:-1000}
+      - PGID=${PGID:-1000}
+      - TZ=${TZ:-Europe/Moscow}
+      - CUSTOM_USER=${OBSIDIAN_USER:-admin}
+      - PASSWORD=${OBSIDIAN_PASSWORD:-admin}
+    volumes:
+      - obsidian_config:/config
+      - obsidian_vaults:/config/vaults
+    ports:
+      - "${OBSIDIAN_HTTPS_PORT:-3001}:3001"
+    devices:
+      - /dev/dri:/dev/dri
+    shm_size: "1gb"
+    networks:
+      - ollama-network
+
 volumes:
   ollama_data:
   open-webui_data:
@@ -102,6 +125,8 @@ volumes:
   netdatalib:
   netdatacache:
   redis_data:
+  obsidian_config:
+  obsidian_vaults:
 
 networks:
   ollama-network:
