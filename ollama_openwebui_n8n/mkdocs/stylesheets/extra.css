@@ -1,0 +1,37 @@
+/* Дополнительные стили для Obsidian заметок */
+
+/* Улучшенное отображение таблиц */
+.md-typeset table:not([class]) {
+  display: table;
+  width: 100%;
+  border-collapse: collapse;
+  overflow-x: auto;
+}
+
+/* Подсветка внутренних ссылок Obsidian */
+.md-typeset a[href^="[["] {
+  color: var(--md-accent-fg-color);
+  text-decoration: none;
+  border-bottom: 1px dotted var(--md-accent-fg-color);
+}
+
+/* Стили для callouts/admonitions из Obsidian */
+.md-typeset .admonition {
+  margin: 1.5625em 0;
+}
+
+/* Улучшенное отображение кода */
+.md-typeset code {
+  padding: 0.2em 0.4em;
+  border-radius: 0.2em;
+}
+
+/* Стили для тегов */
+.md-typeset .tag {
+  display: inline-block;
+  padding: 0.2em 0.6em;
+  margin: 0.2em;
+  border-radius: 1em;
+  background-color: var(--md-default-fg-color--lighter);
+  font-size: 0.85em;
+}

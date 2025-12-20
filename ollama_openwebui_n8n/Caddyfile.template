@@ -1,0 +1,56 @@
+{
+    email ${EMAIL}
+}
+
+n8n.${DOMAIN} {
+    reverse_proxy n8n:${N8N_CONTAINER_PORT}
+}
+
+ollama.${DOMAIN} {
+    reverse_proxy open-webui:${OWUI_CONTAINER_PORT}
+}
+
+netdata.${DOMAIN} {
+    reverse_proxy netdata:${NETDATA_CONTAINER_PORT}
+}
+
+obsidian.${DOMAIN} {
+    reverse_proxy obsidian:${OBSIDIAN_HOST_PORT} {
+        transport http {
+            tls
+            tls_insecure_skip_verify
+        }
+    }
+}
+
+notes.${DOMAIN} {
+    root * /html_notes
+    file_server
+    encode gzip
+    
+    # Настройки кеширования
+    header {
+        Cache-Control "public, max-age=3600"
+        -Server
+    }
+    
+    # Обработка 404 - редирект на главную
+    handle_errors {
+        @404 {
+            expression {http.error.status_code} == 404
+        }
+        rewrite @404 /index.html
+        file_server
+    }
+}
+
+caddy {
+    tls internal
+    handle_path /obsidian/* {
+        reverse_proxy https://obsidian:${OBSIDIAN_API_PORT_HOST} {
+            transport http {
+                tls_insecure_skip_verify
+            }
+        }
+    }
+}

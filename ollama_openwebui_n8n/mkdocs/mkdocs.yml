@@ -1,0 +1,87 @@
+site_name: Obsidian Notes
+site_description: Личная база знаний из Obsidian
+site_author: Your Name
+site_url: https://notes.sweetsweep.online
+theme:
+  name: material
+  language: ru
+  palette:
+  - media: '(prefers-color-scheme: light)'
+    scheme: default
+    primary: indigo
+    accent: indigo
+    toggle:
+      icon: material/brightness-7
+      name: Переключить на тёмную тему
+  - media: '(prefers-color-scheme: dark)'
+    scheme: slate
+    primary: indigo
+    accent: indigo
+    toggle:
+      icon: material/brightness-4
+      name: Переключить на светлую тему
+  features:
+  - navigation.tabs
+  - navigation.tabs.sticky
+  - navigation.sections
+  - navigation.expand
+  - navigation.path
+  - navigation.top
+  - navigation.footer
+  - navigation.indexes
+  - toc.follow
+  - toc.integrate
+  - search.suggest
+  - search.highlight
+  - search.share
+  - content.code.copy
+  - content.code.annotate
+plugins:
+- search:
+    lang:
+    - ru
+    - en
+markdown_extensions:
+- pymdownx.highlight:
+    anchor_linenums: true
+    line_spans: __span
+    pygments_lang_class: true
+- pymdownx.inlinehilite
+- pymdownx.snippets
+- pymdownx.superfences
+- pymdownx.tabbed:
+    alternate_style: true
+- pymdownx.tasklist:
+    custom_checkbox: true
+- pymdownx.emoji
+- admonition
+- pymdownx.details
+- pymdownx.mark
+- pymdownx.caret
+- pymdownx.tilde
+- pymdownx.keys
+- attr_list
+- md_in_html
+- def_list
+- footnotes
+- tables
+- abbr
+- toc:
+    permalink: true
+    toc_depth: 3
+extra:
+  social:
+  - icon: fontawesome/brands/github
+    link: https://github.com/yourusername
+  generator: false
+extra_css:
+- stylesheets/extra.css
+nav:
+- Главная: index.md
+- Docker:
+  - Welcome: Docker/Welcome.md
+- Global:
+  - toc: Global/toc.md
+  - wireguard: Global/wireguard.md
+- LLM:
+  - Welcome: LLM/Welcome.md

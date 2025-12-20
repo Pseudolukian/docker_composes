@@ -1,4 +1,40 @@
 services:
+  caddy:
+    image: caddy:latest
+    container_name: caddy
+    restart: unless-stopped
+    ports:
+      - "${CADDY_HTTP_HOST_PORT}:${CADDY_HTTP_CONTAINER_PORT}"
+      - "${CADDY_HTTPS_HOST_PORT}:${CADDY_HTTPS_CONTAINER_PORT}"
+    env_file:
+      - .env
+    volumes:
+      - caddy_data:/data
+      - caddy_config:/config
+      - html_notes:/html_notes:ro  # Монтируем том с собранной документацией
+      - ./Caddyfile.template:/etc/caddy/Caddyfile.template:ro
+    command: >
+      /bin/sh -c "
+        apk add --no-cache gettext >/dev/null 2>&1 || true;
+        envsubst < /etc/caddy/Caddyfile.template > /etc/caddy/Caddyfile &&
+        caddy run --config /etc/caddy/Caddyfile --adapter caddyfile
+      "
+    networks:
+      - ollama-network
+    depends_on:
+      - mkdocs
+
+  caddy-perms-fixer:
+    image: alpine:latest
+    container_name: caddy-perms-fixer
+    restart: unless-stopped
+    volumes:
+      - caddy_data:/data
+      - ./fix-caddy-pki-perms.sh:/usr/local/bin/fix-caddy-pki-perms.sh:ro
+    command: ["/bin/sh", "-c", "while true; do /usr/local/bin/fix-caddy-pki-perms.sh; sleep 300; done"]
+    networks:
+      - ollama-network
+
   ollama:
     image: ollama/ollama:latest
     container_name: ollama
@@ -7,8 +43,6 @@ services:
       - ollama_data:/root/.ollama
     networks:
       - ollama-network
-    ports:
-      - "${OLLAMA_HOST_PORT}:${OLLAMA_CONTAINER_PORT}"
     environment:
       - OLLAMA_NUM_PARALLEL=${OLLAMA_NUM_PARALLEL}
       - OLLAMA_MAX_LOADED_MODELS=${OLLAMA_MAX_LOADED_MODELS}
@@ -29,8 +63,6 @@ services:
       - OLLAMA_BASE_URL=http://ollama:${OLLAMA_CONTAINER_PORT}
     networks:
       - ollama-network
-    ports:
-      - "${OWUI_HOST_PORT}:${OWUI_CONTAINER_PORT}"
     extra_hosts:
       - host.docker.internal:host-gateway
 
@@ -40,20 +72,20 @@ services:
     restart: unless-stopped
     volumes:
       - n8n_data:/home/node/.n8n
+      - caddy_data:/caddy_data:ro
     depends_on:
       - ollama
       - redis
     environment:
-      - N8N_HOST=${N8N_HOST}
-      - N8N_PROTOCOL=${N8N_PROTOCOL}
+      - N8N_HOST=n8n.sweetsweep.online
+      - N8N_PROTOCOL=https
       - N8N_PORT=${N8N_CONTAINER_PORT}
-      - WEBHOOK_URL=http://${SERVER_IP}:${N8N_HOST_PORT}/
-      - N8N_EDITOR_BASE_URL=http://${SERVER_IP}:${N8N_HOST_PORT}/
+      - WEBHOOK_URL=https://n8n.sweetsweep.online/
+      - N8N_EDITOR_BASE_URL=https://n8n.sweetsweep.online/
       - N8N_SECURE_COOKIE=${N8N_SECURE_COOKIE}
+      - NODE_EXTRA_CA_CERTS=/caddy_data/caddy/pki/authorities/local/root.crt
     networks:
       - ollama-network
-    ports:
-      - "${N8N_HOST_PORT}:${N8N_CONTAINER_PORT}"
 
   redis:
     image: redis:latest
@@ -89,8 +121,6 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock:ro
     networks:
       - ollama-network
-    ports:
-      - "${NETDATA_HOST_PORT}:${NETDATA_CONTAINER_PORT}"
     environment:
       - NETDATA_DISABLE_CLOUD=1
 
@@ -106,16 +136,48 @@ services:
       - TZ=${TZ:-Europe/Moscow}
       - CUSTOM_USER=${OBSIDIAN_USER:-admin}
       - PASSWORD=${OBSIDIAN_PASSWORD:-admin}
+      - NO_DECOR=true
+      - NO_FULL=true
+      - DISABLE_IPV6=true
+      - LC_ALL=en_US.UTF-8
     volumes:
       - obsidian_config:/config
       - obsidian_vaults:/config/vaults
     ports:
-      - "${OBSIDIAN_HTTPS_PORT:-3001}:3001"
+      - "${OBSIDIAN_HOST_PORT}:${OBSIDIAN_CONTAINER_PORT}"
+      - "${OBSIDIAN_API_PORT_HOST}:${OBSIDIAN_API_PORT_CONTAINER}"
     devices:
       - /dev/dri:/dev/dri
     shm_size: "1gb"
     networks:
       - ollama-network
+
+  article-parser:
+    image: article_parser:latest
+    container_name: article-parser
+    restart: unless-stopped
+    expose:
+      - "${ARTICLE_PARSER_PORTS}"
+    networks:
+      - ollama-network
+
+  mkdocs:
+    image: squidfunk/mkdocs-material:latest
+    container_name: mkdocs
+    restart: unless-stopped
+    volumes:
+      - obsidian_vaults:/obsidian_vaults:ro  # Чтение из vaults Obsidian
+      - html_notes:/html_output              # Вывод собранной документации
+      - ./mkdocs:/docs                       # Конфигурация mkdocs
+    environment:
+      - OBSIDIAN_VAULTS_PATH=/obsidian_vaults
+      - MKDOCS_DOCS_PATH=/docs/docs
+      - MKDOCS_CONFIG_PATH=/docs/mkdocs.yml
+    entrypoint: /docs/entrypoint.sh
+    networks:
+      - ollama-network
+    depends_on:
+      - obsidian
 
 volumes:
   ollama_data:
@@ -127,6 +189,9 @@ volumes:
   redis_data:
   obsidian_config:
   obsidian_vaults:
+  caddy_data:
+  caddy_config:
+  html_notes:  # Том для собранной HTML документации из mkdocs
 
 networks:
   ollama-network:
