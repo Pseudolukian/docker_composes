@@ -1,18 +1,24 @@
 services:
-  caddy:
-    image: caddy:latest
-    container_name: caddy
-    restart: unless-stopped
+  caddy:                                                         # Реверс‑прокси (TLS/HTTPS, маршрутизация на сервисы по домену)
+    image: caddy:latest                                          # Образ Caddy (внутренний CA, автосертификаты, проксирование)
+    container_name: caddy                                        # Фиксированное имя контейнера (удобно для docker exec/logs)
+    restart: unless-stopped                                      # Автоперезапуск контейнера, пока он не будет остановлен в ручном режиме
     ports:
-      - "${CADDY_HTTP_HOST_PORT}:${CADDY_HTTP_CONTAINER_PORT}"
-      - "${CADDY_HTTPS_HOST_PORT}:${CADDY_HTTPS_CONTAINER_PORT}"
+      - "${CADDY_HTTP_HOST_PORT}:${CADDY_HTTP_CONTAINER_PORT}"   # HTTP с хоста -> Caddy (обычно 80:80)
+      - "${CADDY_HTTPS_HOST_PORT}:${CADDY_HTTPS_CONTAINER_PORT}" # HTTPS с хоста -> Caddy (обычно 443:443)
     env_file:
-      - .env
+      - .env                                                     # Подгружаем переменные из файла .env для шаблонов и настроек
     volumes:
-      - caddy_data:/data
-      - caddy_config:/config
-      - html_notes:/html_notes:ro  # Монтируем том с собранной документацией
-      - ./Caddyfile.template:/etc/caddy/Caddyfile.template:ro
+      - caddy_data:/data                                         # Данные Caddy (в т.ч. PKI/сертификаты) — общий том для n8n
+      - caddy_config:/config                                     # Служебная конфигурация Caddy
+      - html_notes:/html_notes:ro                                # Статика (HTML) из mkdocs — только чтение
+      - ./Caddyfile.template:/etc/caddy/Caddyfile.template:ro    # Шаблон Caddyfile (с ${...}) — только чтение
+    # Команда запуска Caddy делает 3 вещи:
+    # 1) Ставит `gettext` (в нём есть `envsubst`) — если пакет уже есть, продолжаем без ошибки.
+    # 2) Генерирует итоговый `/etc/caddy/Caddyfile` из шаблона `/etc/caddy/Caddyfile.template`,
+    #    подставляя переменные окружения из `.env` (через `env_file`).
+    # 3) Стартует Caddy с получившимся конфигом.
+    # Важно: комментарии нельзя вставлять внутрь строки `/bin/sh -c "..."` — это ломает команду.
     command: >
       /bin/sh -c "
         apk add --no-cache gettext >/dev/null 2>&1 || true;
@@ -20,179 +26,167 @@ services:
         caddy run --config /etc/caddy/Caddyfile --adapter caddyfile
       "
     networks:
-      - ollama-network
+      - ollama-network                                           # Общая сеть для проксируемых сервисов
     depends_on:
-      - mkdocs
+      - mkdocs                                                   # Ждём контейнер mkdocs, чтобы статика была доступна
 
-  caddy-perms-fixer:
-    image: alpine:latest
-    container_name: caddy-perms-fixer
-    restart: unless-stopped
+  caddy-perms-fixer:                                             # Фикс прав на PKI Caddy, чтобы n8n мог читать root.crt
+    image: alpine:latest                                         # Лёгкий образ для запуска shell-скрипта
+    container_name: caddy-perms-fixer                            # Фиксированное имя контейнера
+    restart: unless-stopped                                      # Автоперезапуск контейнера, пока он не будет остановлен в ручном режиме
     volumes:
-      - caddy_data:/data
-      - ./fix-caddy-pki-perms.sh:/usr/local/bin/fix-caddy-pki-perms.sh:ro
-    command: ["/bin/sh", "-c", "while true; do /usr/local/bin/fix-caddy-pki-perms.sh; sleep 300; done"]
+      - caddy_data:/data                                         # Монтируем тот же том, где Caddy хранит /data/caddy/pki/...
+      - ./fix-caddy-pki-perms.sh:/usr/local/bin/fix-caddy-pki-perms.sh:ro # Скрипт коррекции прав — только чтение
+    command: ["/bin/sh", "-c", "while true; do /usr/local/bin/fix-caddy-pki-perms.sh; sleep 300; done"] # Переодически приводит права к читаемым
     networks:
-      - ollama-network
+      - ollama-network                                           # Сеть не обязательна, но унифицируем
 
-  ollama:
-    image: ollama/ollama:latest
-    container_name: ollama
-    restart: unless-stopped
+  ollama:                                                        # Локальный LLM-сервер (API для моделей)
+    image: ollama/ollama:latest                                  # Используется последняя версия Ollama
+    container_name: ollama                                       # Имя контейнера (на него ссылаются другие сервисы по DNS в сети)
+    restart: unless-stopped                                      # Автоперезапуск
     volumes:
-      - ollama_data:/root/.ollama
+      - ollama_data:/root/.ollama                                # Хранилище моделей/кэша Ollama (переживает перезапуски)
     networks:
-      - ollama-network
+      - ollama-network                                           # Сеть, чтобы Open WebUI и n8n ходили на http://ollama:...
     environment:
-      - OLLAMA_NUM_PARALLEL=${OLLAMA_NUM_PARALLEL}
-      - OLLAMA_MAX_LOADED_MODELS=${OLLAMA_MAX_LOADED_MODELS}
-      - OLLAMA_MODELS=/root/.ollama/models
+      - OLLAMA_NUM_PARALLEL=${OLLAMA_NUM_PARALLEL}               # Параллельные запросы/генерации (из .env)
+      - OLLAMA_MAX_LOADED_MODELS=${OLLAMA_MAX_LOADED_MODELS}     # Сколько моделей держать загруженными (из .env)
+      - OLLAMA_MODELS=/root/.ollama/models                       # Путь каталога моделей внутри контейнера
     dns:
-      - 1.1.1.1
-      - 1.0.0.1
+      - 1.1.1.1                                                  # Явно задаём DNS (Cloudflare) так как в образе по умолчанию DNS не задан
+      - 1.0.0.1                                                  # Второй DNS
 
-  open-webui:
-    image: ghcr.io/open-webui/open-webui:main
-    container_name: open-webui
-    restart: unless-stopped
+  open-webui:                                                    # Веб‑интерфейс для общения с Ollama
+    image: ghcr.io/open-webui/open-webui:main                    # Образ Open WebUI
+    container_name: open-webui                                   # Имя контейнера
+    restart: unless-stopped                                      # Автоперезапуск
     volumes:
-      - open-webui_data:/app/backend/data
+      - open-webui_data:/app/backend/data                        # Данные WebUI (пользователи/настройки/история)
     depends_on:
-      - ollama
+      - ollama                                                   # Ожидание запуска контейнера с Ollama
     environment:
-      - OLLAMA_BASE_URL=http://ollama:${OLLAMA_CONTAINER_PORT}
+      - OLLAMA_BASE_URL=http://ollama:${OLLAMA_CONTAINER_PORT}   # URL Ollama внутри docker-сети (порт из .env)
     networks:
-      - ollama-network
+      - ollama-network                                           # Общая сеть
     extra_hosts:
-      - host.docker.internal:host-gateway
+      - host.docker.internal:host-gateway                        # Доступ из контейнера к хосту по имени host.docker.internal
 
-  n8n:
-    image: n8nio/n8n:${N8N_VERSION}
-    container_name: n8n
-    restart: unless-stopped
+  n8n:                                                           # Автоматизация/воркфлоу (UI + вебхуки)
+    image: n8nio/n8n:${N8N_VERSION}                              # Версия n8n фиксируется через .env
+    container_name: n8n                                          # Имя контейнера
+    restart: unless-stopped                                      # Автоперезапуск
     volumes:
-      - n8n_data:/home/node/.n8n
-      - caddy_data:/caddy_data:ro
+      - n8n_data:/home/node/.n8n                                 # Персистентные данные n8n (учётные записи и workflows)
+      - caddy_data:/caddy_data:ro                                # Read‑only доступ к CA Caddy (root.crt) через общий том
     depends_on:
-      - ollama
-      - redis
+      - ollama                                                   # Ожидание старта контейнера с Ollama 
     environment:
-      - N8N_HOST=n8n.sweetsweep.online
-      - N8N_PROTOCOL=https
-      - N8N_PORT=${N8N_CONTAINER_PORT}
-      - WEBHOOK_URL=https://n8n.sweetsweep.online/
-      - N8N_EDITOR_BASE_URL=https://n8n.sweetsweep.online/
-      - N8N_SECURE_COOKIE=${N8N_SECURE_COOKIE}
-      - NODE_EXTRA_CA_CERTS=/caddy_data/caddy/pki/authorities/local/root.crt
+      - N8N_HOST=n8n.${DOMAIN}                                   # Публичный хост UI n8n (используется для ссылок/redirect)
+      - N8N_PROTOCOL=https                                       # Протокол снаружи (через Caddy TLS)
+      - N8N_PORT=${N8N_CONTAINER_PORT}                           # Порт, который слушает n8n внутри контейнера (подтягивается из .env)
+      - WEBHOOK_URL=https://${DOMAIN}/                           # Базовый URL для вебхуков (важно для внешних интеграций)
+      - N8N_EDITOR_BASE_URL=https://${DOMAIN}/                   # База URL редактора (чтобы UI генерил правильные ссылки)
+      - N8N_SECURE_COOKIE=${N8N_SECURE_COOKIE}                   # Secure-cookie для HTTPS (true/false из .env)
+      - NODE_EXTRA_CA_CERTS=/caddy_data/caddy/pki/authorities/local/root.crt # Доверять самоподписанному CA Caddy (TLS)
     networks:
-      - ollama-network
+      - ollama-network                                           # Общая сеть
 
-  redis:
-    image: redis:latest
-    restart: always
-    ports:
-      - "${REDIS_HOST_PORT}:${REDIS_CONTAINER_PORT}"
-    volumes:
-      - redis_data:/data
-    networks:
-      - ollama-network 
-
-  netdata:
-    image: netdata/netdata:latest
-    container_name: netdata
-    hostname: ${NETDATA_HOSTNAME}
-    restart: unless-stopped
+  netdata:                                                      # Мониторинг хоста и контейнеров (метрики/дашборды)
+    image: netdata/netdata:latest                               # Последняя версия образа Netdata
+    container_name: netdata                                     # Имя контейнера
+    hostname: ${NETDATA_HOSTNAME}                               # Отображаемое имя хоста в UI Netdata (из .env)
+    restart: unless-stopped                                     # Автоперезапуск
     cap_add:
-      - SYS_PTRACE
-      - SYS_ADMIN
+      - SYS_PTRACE                                              # Нужно для части системных метрик/профилирования
+      - SYS_ADMIN                                               # Нужно для части системных метрик (высокие привилегии)
     security_opt:
-      - apparmor:unconfined
+      - apparmor:unconfined                                     # Убираем ограничения AppArmor, иначе часть метрик может не работать
     volumes:
-      - netdataconfig:/etc/netdata
-      - netdatalib:/var/lib/netdata
-      - netdatacache:/var/cache/netdata
-      - /etc/passwd:/host/etc/passwd:ro
-      - /etc/group:/host/etc/group:ro
-      - /etc/localtime:/etc/localtime:ro
-      - /proc:/host/proc:ro
-      - /sys:/host/sys:ro
-      - /etc/os-release:/host/etc/os-release:ro
-      - /var/log:/host/var/log:ro
-      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - netdataconfig:/etc/netdata                              # Конфиги Netdata
+      - netdatalib:/var/lib/netdata                             # База/состояние Netdata
+      - netdatacache:/var/cache/netdata                         # Кэш Netdata
+      - /etc/passwd:/host/etc/passwd:ro                         # Для маппинга UID->имена пользователей
+      - /etc/group:/host/etc/group:ro                           # Для маппинга GID->группы
+      - /etc/localtime:/etc/localtime:ro                        # Корректное время/таймзона в контейнере
+      - /proc:/host/proc:ro                                     # Метрики процессов/ядра
+      - /sys:/host/sys:ro                                       # Метрики системы/устройств
+      - /etc/os-release:/host/etc/os-release:ro                 # Информация об ОС
+      - /var/log:/host/var/log:ro                               # (Опционально) чтение логов хоста для интеграций
+      - /var/run/docker.sock:/var/run/docker.sock:ro            # Доступ к Docker API для метрик контейнеров
     networks:
-      - ollama-network
+      - ollama-network                                          # Общая сеть (если проксируете Netdata через Caddy)
     environment:
-      - NETDATA_DISABLE_CLOUD=1
+      - NETDATA_DISABLE_CLOUD=1                                 # Отключаем Netdata Cloud (не шлём метрики наружу)
 
-  obsidian:
-    image: lscr.io/linuxserver/obsidian:latest
-    container_name: obsidian
-    restart: unless-stopped
+  obsidian:                                                     # Obsidian в контейнере (веб/VNC‑интерфейс, хранение vault)
+    image: lscr.io/linuxserver/obsidian:latest                  # LinuxServer.io образ Obsidian
+    container_name: obsidian                                    # Имя контейнера
+    restart: unless-stopped                                     # Автоперезапуск
     security_opt:
-      - seccomp:unconfined
+      - seccomp:unconfined                                      # Снимаем seccomp-ограничения (иногда нужно для GUI/Chromium внутри)
     environment:
-      - PUID=${PUID:-1000}
-      - PGID=${PGID:-1000}
-      - TZ=${TZ:-Europe/Moscow}
-      - CUSTOM_USER=${OBSIDIAN_USER:-admin}
-      - PASSWORD=${OBSIDIAN_PASSWORD:-admin}
-      - NO_DECOR=true
-      - NO_FULL=true
-      - DISABLE_IPV6=true
-      - LC_ALL=en_US.UTF-8
+      - PUID=${PUID:-1000}                                      # UID владельца файлов в примонтированных томах (по умолчанию 1000)
+      - PGID=${PGID:-1000}                                      # GID владельца файлов (по умолчанию 1000)
+      - TZ=${TZ:-Europe/Moscow}                                 # Таймзона контейнера
+      - CUSTOM_USER=${OBSIDIAN_USER:-admin}                     # Логин для доступа к UI (из .env)
+      - PASSWORD=${OBSIDIAN_PASSWORD:-admin}                    # Пароль для доступа к UI (из .env)
+      - NO_DECOR=true                                           # Убрать декорации окна (косметика UI)
+      - NO_FULL=true                                            # Не разворачивать на весь экран по умолчанию
+      - DISABLE_IPV6=true                                       # Отключить IPv6 внутри контейнера
+      - LC_ALL=en_US.UTF-8                                      # Локаль (чтобы корректно работали шрифты/кодировки)
     volumes:
-      - obsidian_config:/config
-      - obsidian_vaults:/config/vaults
+      - obsidian_config:/config                                 # Конфиги и состояние приложения
+      - obsidian_vaults:/config/vaults                          # Vault'ы Obsidian (используются также mkdocs)
     ports:
-      - "${OBSIDIAN_HOST_PORT}:${OBSIDIAN_CONTAINER_PORT}"
-      - "${OBSIDIAN_API_PORT_HOST}:${OBSIDIAN_API_PORT_CONTAINER}"
+      - "${OBSIDIAN_HOST_PORT}:${OBSIDIAN_CONTAINER_PORT}"      # Порт UI Obsidian на хосте -> в контейнер
+      - "${OBSIDIAN_API_PORT_HOST}:${OBSIDIAN_API_PORT_CONTAINER}" # (Если нужно) API/служебный порт
     devices:
-      - /dev/dri:/dev/dri
-    shm_size: "1gb"
+      - /dev/dri:/dev/dri                                      # Проброс GPU (ускорение рендера/кодеков)
+    shm_size: "1gb"                                            # Shared memory для браузера/GUI (уменьшает вылеты от нехватки /dev/shm)
     networks:
-      - ollama-network
+      - ollama-network                                          # Общая сеть
 
-  article-parser:
-    image: article_parser:latest
-    container_name: article-parser
-    restart: unless-stopped
+  article-parser:                                               # Внутренний сервис парсинга статей (доступен в docker-сети)
+    image: article_parser:latest                                # Локально собранный образ (смотрите /root/articles_parser)
+    container_name: article-parser                              # Имя контейнера
+    restart: unless-stopped                                     # Автоперезапуск
     expose:
-      - "${ARTICLE_PARSER_PORTS}"
+      - "${ARTICLE_PARSER_PORTS}"                               # Открываем порт только внутри сети (не публикуем на хост)
     networks:
-      - ollama-network
+      - ollama-network                                          # Общая сеть
 
-  mkdocs:
-    image: squidfunk/mkdocs-material:latest
-    container_name: mkdocs
-    restart: unless-stopped
+  mkdocs:                                                       # Сборка документации (Obsidian vault -> статический HTML)
+    image: squidfunk/mkdocs-material:latest                     # Последняя версия образа MkDocs Material
+    container_name: mkdocs                                      # Имя контейнера
+    restart: unless-stopped                                     # Автоперезапуск
     volumes:
-      - obsidian_vaults:/obsidian_vaults:ro  # Чтение из vaults Obsidian
-      - html_notes:/html_output              # Вывод собранной документации
-      - ./mkdocs:/docs                       # Конфигурация mkdocs
+      - obsidian_vaults:/obsidian_vaults:ro                     # Источник: vault'ы Obsidian — только чтение
+      - html_notes:/html_output                                 # Выход: собранный HTML (его отдаёт Caddy)
+      - ./mkdocs:/docs                                          # Конфиг/скрипты mkdocs (mkdocs.yml, entrypoint.sh и т.д.)
     environment:
-      - OBSIDIAN_VAULTS_PATH=/obsidian_vaults
-      - MKDOCS_DOCS_PATH=/docs/docs
-      - MKDOCS_CONFIG_PATH=/docs/mkdocs.yml
-    entrypoint: /docs/entrypoint.sh
+      - OBSIDIAN_VAULTS_PATH=/obsidian_vaults                   # Путь к vault'ам внутри контейнера
+      - MKDOCS_DOCS_PATH=/docs/docs                             # Путь к исходным markdown внутри /docs
+      - MKDOCS_CONFIG_PATH=/docs/mkdocs.yml                     # Путь к конфигу MkDocs
+    entrypoint: /docs/entrypoint.sh                             # Кастомный entrypoint: генерация/сборка сайта
     networks:
-      - ollama-network
+      - ollama-network                                          # Общая сеть
     depends_on:
-      - obsidian
+      - obsidian                                                # Ждём vault'ы/контейнер (хотя том и так общий)
 
 volumes:
-  ollama_data:
-  open-webui_data:
-  n8n_data:
-  netdataconfig:
-  netdatalib:
-  netdatacache:
-  redis_data:
-  obsidian_config:
-  obsidian_vaults:
-  caddy_data:
-  caddy_config:
-  html_notes:  # Том для собранной HTML документации из mkdocs
+  ollama_data:                                                  # Персистентные данные Ollama (модели/кэш)
+  open-webui_data:                                              # Данные Open WebUI
+  n8n_data:                                                     # Данные n8n
+  netdataconfig:                                                # Конфиги Netdata
+  netdatalib:                                                   # Данные/состояние Netdata
+  netdatacache:                                                 # Кэш Netdata
+  obsidian_config:                                              # Конфиги Obsidian
+  obsidian_vaults:                                              # Vault'ы Obsidian (источник для mkdocs)
+  caddy_data:                                                   # Данные Caddy (в т.ч. внутренний CA/root.crt для n8n)
+  caddy_config:                                                 # Конфиг Caddy
+  html_notes:                                                   # Том для собранной HTML документации из mkdocs
 
 networks:
   ollama-network:
-    driver: bridge
+    driver: bridge                                              # Простая docker bridge-сеть для общения контейнеров по имени
